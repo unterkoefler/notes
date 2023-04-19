@@ -1,0 +1,1 @@
+simple-http-server --try-file 404.html --index --nocache
