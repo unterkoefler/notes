@@ -29,6 +29,8 @@ main =
 type alias Model =
     { dimensions : Dimensions
     , notes : List Note
+    , currentNoteId : Maybe Int
+    , showSidebar : Bool
     }
 
 
@@ -41,6 +43,7 @@ type alias Dimensions =
 type alias Note =
     { contents : String
     , id : Int
+    , title : String
     }
 
 
@@ -52,6 +55,8 @@ init flags =
     in
     ( { dimensions = dimensions
       , notes = []
+      , currentNoteId = Nothing
+      , showSidebar = True
       }
     , Cmd.none
     )
@@ -83,7 +88,11 @@ defaultDimensions =
 type Msg
     = WindowResized Dimensions
     | AddNote
-    | EditNote Int String
+    | EditNoteContents Int String
+    | EditNoteTitle Int String
+    | SelectNote Int
+    | CloseNote
+    | ToggleSidebar
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -93,10 +102,26 @@ update msg model =
             ( { model | dimensions = newDim }, Cmd.none )
 
         AddNote ->
-            ( { model | notes = newNote model :: model.notes }, Cmd.none )
+            let
+                n =
+                    newNote model
+            in
+            ( { model | notes = n :: model.notes, currentNoteId = Just n.id }, Cmd.none )
 
-        EditNote id newContents ->
-            ( { model | notes = editNote id newContents model.notes }, Cmd.none )
+        EditNoteContents id newContents ->
+            ( { model | notes = editNoteContents id newContents model.notes }, Cmd.none )
+
+        EditNoteTitle id newTitle ->
+            ( { model | notes = editNoteTitle id newTitle model.notes }, Cmd.none )
+
+        SelectNote id ->
+            ( { model | currentNoteId = Just id }, Cmd.none )
+
+        CloseNote ->
+            ( { model | currentNoteId = Nothing }, Cmd.none )
+
+        ToggleSidebar ->
+            ( { model | showSidebar = not model.showSidebar }, Cmd.none )
 
 
 newNote : Model -> Note
@@ -104,25 +129,21 @@ newNote model =
     let
         maxId =
             model.notes |> List.map .id |> List.maximum |> Maybe.withDefault 0
+
+        id =
+            maxId + 1
     in
-    { id = maxId + 1
+    { id = id
     , contents = ""
+    , title = "Note " ++ String.fromInt id
     }
 
 
-editNote : Int -> String -> List Note -> List Note
-editNote id newContents notes =
+editNoteContents : Int -> String -> List Note -> List Note
+editNoteContents id newContents notes =
     let
-        maybeNote : Maybe Note
-        maybeNote =
-            notes
-                |> List.filter (\n -> n.id == id)
-                |> List.head
-
-        notesWithoutCurrent : List Note
-        notesWithoutCurrent =
-            notes
-                |> List.filter (\n -> n.id /= id)
+        ( maybeNote, notesWithoutCurrent ) =
+            findWithRest (\n -> n.id == id) notes
     in
     case maybeNote of
         Nothing ->
@@ -130,6 +151,46 @@ editNote id newContents notes =
 
         Just noteToEdit ->
             { noteToEdit | contents = newContents } :: notesWithoutCurrent
+
+
+editNoteTitle : Int -> String -> List Note -> List Note
+editNoteTitle id newTitle notes =
+    let
+        ( maybeNote, notesWithoutCurrent ) =
+            findWithRest (\n -> n.id == id) notes
+    in
+    case maybeNote of
+        Nothing ->
+            notes
+
+        Just noteToEdit ->
+            { noteToEdit | title = newTitle } :: notesWithoutCurrent
+
+
+findNote : Int -> List Note -> Maybe Note
+findNote id notes =
+    notes
+        |> List.filter (\n -> n.id == id)
+        |> List.head
+
+
+findWithRest : (a -> Bool) -> List a -> ( Maybe a, List a )
+findWithRest pred xs =
+    findWithRestHelp pred xs []
+
+
+findWithRestHelp : (a -> Bool) -> List a -> List a -> ( Maybe a, List a )
+findWithRestHelp pred xs acc =
+    case xs of
+        [] ->
+            ( Nothing, acc )
+
+        x :: rest ->
+            if pred x then
+                ( Just x, acc ++ rest )
+
+            else
+                findWithRestHelp pred rest (x :: acc)
 
 
 
@@ -166,7 +227,7 @@ getScreenSize dim =
 
 
 baseFontSize =
-    18
+    12
 
 
 columnSpacing =
@@ -234,21 +295,33 @@ getBody model =
     let
         screenSize =
             getScreenSize model.dimensions
+
+        currentNote : Maybe Note
+        currentNote =
+            Maybe.andThen (\id -> findNote id model.notes) model.currentNoteId
     in
     Element.layout
         [ Font.size baseFontSize
-        , paddingEach basePadding
         ]
     <|
-        Element.column
-            ([ width <| columnWidth screenSize model.dimensions.width
-             , spacing columnSpacing
-             ]
-                ++ responsiveColumnAttributes screenSize
-            )
-            [ heading
-            , buttons screenSize model.dimensions model.notes
-            ]
+        case currentNote of
+            Nothing ->
+                column
+                    [ spacing 16
+                    ]
+                    [ newNoteButton
+                    , notePreviews model.notes
+                    ]
+
+            Just n ->
+                row
+                    [ height fill
+                    , width fill
+                    , spacing 24
+                    ]
+                    [ sidebar model.showSidebar model.notes
+                    , noteEditor n
+                    ]
 
 
 responsiveColumnAttributes : ScreenSize -> List (Attribute Msg)
@@ -273,38 +346,80 @@ heading =
         (text "Notes")
 
 
-buttons : ScreenSize -> Dimensions -> List Note -> Element Msg
-buttons screenSize dim notes =
-    let
-        w =
-            columnWidth screenSize dim.width
+sidebar : Bool -> List Note -> Element Msg
+sidebar showSidebar notes =
+    if not showSidebar then
+        sidebarToggler showSidebar
 
-        group =
-            case screenSize of
-                Mobile ->
-                    column
+    else
+        row
+            [ width (px 200)
+            , height fill
+            ]
+            [ column
+                [ spacing 16
+                , alignTop
+                , paddingXY 24 24
+                , clipX
+                , width fill
+                ]
+                [ newNoteButton
+                , notePreviews notes
+                ]
+            , sidebarToggler showSidebar
+            ]
 
-                Desktop ->
-                    row
-    in
-    group
-        [ spacing buttonSpacing
-        , width w
+
+notePreviews : List Note -> Element Msg
+notePreviews notes =
+    column
+        [ spacing 12
+        , scrollbarY
+        , height (px 800)
+        , width fill
         ]
-        ([ button (Just AddNote) "Add note" green
-         ]
-            ++ (notes
-                    |> List.sortBy .id
-                    |> List.map note
-               )
-        )
+        (List.map notePreview notes)
+
+
+newNoteButton : Element Msg
+newNoteButton =
+    button (Just AddNote) "+ Add note" green
+
+
+sidebarToggler : Bool -> Element Msg
+sidebarToggler showSidebar =
+    let
+        label =
+            if showSidebar then
+                "<"
+
+            else
+                ">"
+    in
+    el
+        [ height fill
+        , Border.color purple
+        , Border.widthEach { bottom = 0, top = 0, left = 0, right = 3 }
+        , padding 12
+        , onRight <|
+            Input.button
+                [ Region.description "toggle sidebar"
+                , Border.width 1
+                , Border.rounded 100
+                , padding 12
+                ]
+                { label = text label
+                , onPress = Just ToggleSidebar
+                }
+        ]
+        Element.none
 
 
 button : Maybe Msg -> String -> Element.Color -> Element Msg
 button onPress lbl color =
     Input.button
         [ Background.color color
-        , paddingXY 0 12
+        , paddingXY 6 12
         , Font.center
         , Font.size buttonFontSize
         , Border.rounded 6
@@ -315,21 +430,79 @@ button onPress lbl color =
         }
 
 
-note : Note -> Element Msg
-note { id, contents } =
+noteEditor : Note -> Element Msg
+noteEditor { id, contents, title } =
     column
         [ spacing 6
+        , width fill
+        , height fill
+        , padding 12
         ]
-        [ text <| "Note #" ++ String.fromInt id
+        [ row
+            [ width fill
+            ]
+            [ Input.text
+                [ Font.size 16, Font.underline ]
+                { label = Input.labelHidden "Note title"
+                , onChange = EditNoteTitle id
+                , placeholder = Nothing
+                , text = title
+                }
+            , Input.button
+                [ alignRight
+                , padding 6
+                , Border.width 1
+                , Border.rounded 200
+                , Border.color (rgb255 200 25 25)
+                ]
+                { label = text "X"
+                , onPress = Just CloseNote
+                }
+            ]
         , Input.multiline
-            []
+            [ width fill
+            , height fill
+            ]
             { label = Input.labelHidden "Note contents"
-            , onChange = EditNote id
+            , onChange = EditNoteContents id
             , placeholder = Just (Input.placeholder [] (text "The horrors of a blank page..."))
             , spellcheck = True
             , text = contents
             }
         ]
+
+
+notePreview : Note -> Element Msg
+notePreview { id, contents, title } =
+    let
+        label =
+            column
+                [ spacing 6
+                ]
+                [ el
+                    [ Font.size 16 ]
+                    (text title)
+                , el
+                    [ clip
+                    , height (px 16)
+                    ]
+                    (text <| trimContents contents)
+                ]
+    in
+    Input.button
+        []
+        { label = label
+        , onPress = Just <| SelectNote id
+        }
+
+
+trimContents : String -> String
+trimContents s =
+    if String.length s < 30 then
+        s
+
+    else
+        String.left 26 s ++ "..."
 
 
 
