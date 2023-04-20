@@ -8,8 +8,15 @@
 
 <body>
   <script>
-    var app = Elm.Main.init({
-      flags: { width: window.innerWidth, height: window.innerHeight },
+    const app = Elm.Main.init({
+      flags: { 
+        width: window.innerWidth, 
+        height: window.innerHeight,
+        data: JSON.parse(window.localStorage.getItem("data"))
+      },
+    });
+    app.ports.saveData.subscribe((data) => {
+        window.localStorage.setItem("data", JSON.stringify(data));
     });
   </script>
 </body>

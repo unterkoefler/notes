@@ -9,14 +9,17 @@ import Element.Font as Font
 import Element.Input as Input
 import Element.Region as Region
 import Html exposing (Html)
-import Json.Decode as Json
+import Json.Decode
+import Json.Encode
+import Ports
+import Time
 
 
 
 -- MAIN
 
 
-main : Program Json.Value Model Msg
+main : Program Json.Decode.Value Model Msg
 main =
     Browser.document
         { init = init, update = update, view = view, subscriptions = subscriptions }
@@ -47,38 +50,89 @@ type alias Note =
     }
 
 
-init : Json.Value -> ( Model, Cmd Msg )
+init : Json.Decode.Value -> ( Model, Cmd Msg )
 init flags =
     let
-        dimensions =
+        model =
             parseFlags flags
     in
-    ( { dimensions = dimensions
-      , notes = []
-      , currentNoteId = Nothing
-      , showSidebar = True
-      }
+    ( model
     , Cmd.none
     )
 
 
-parseFlags : Json.Value -> Dimensions
+defaultModel : Model
+defaultModel =
+    { notes = []
+    , showSidebar = True
+    , currentNoteId = Nothing
+    , dimensions = defaultDimensions
+    }
+
+
+parseFlags : Json.Decode.Value -> Model
 parseFlags flags =
-    Json.decodeValue dimensionsDecoder flags
-        |> Result.withDefault defaultDimensions
+    let
+        dimensions =
+            Json.Decode.decodeValue dimensionsDecoder flags
+                |> Result.withDefault defaultDimensions
+
+        model =
+            Json.Decode.decodeValue (Json.Decode.field "data" modelDecoder) flags
+                |> Result.withDefault defaultModel
+    in
+    { model | dimensions = dimensions }
 
 
-dimensionsDecoder : Json.Decoder Dimensions
+dimensionsDecoder : Json.Decode.Decoder Dimensions
 dimensionsDecoder =
-    Json.map2 Dimensions
-        (Json.field "width" Json.int)
-        (Json.field "height" Json.int)
+    Json.Decode.map2 Dimensions
+        (Json.Decode.field "width" Json.Decode.int)
+        (Json.Decode.field "height" Json.Decode.int)
 
 
 defaultDimensions =
     { width = 500
     , height = 500
     }
+
+
+noteDecoder : Json.Decode.Decoder Note
+noteDecoder =
+    Json.Decode.map3 Note
+        (Json.Decode.field "contents" Json.Decode.string)
+        (Json.Decode.field "id" Json.Decode.int)
+        (Json.Decode.field "title" Json.Decode.string)
+
+
+noteEncoder : Note -> Json.Encode.Value
+noteEncoder note =
+    Json.Encode.object
+        [ ( "id", Json.Encode.int note.id )
+        , ( "title", Json.Encode.string note.title )
+        , ( "contents", Json.Encode.string note.contents )
+        ]
+
+
+modelDecoder : Json.Decode.Decoder Model
+modelDecoder =
+    Json.Decode.map3 (Model defaultDimensions)
+        (Json.Decode.field "notes" (Json.Decode.list noteDecoder))
+        (Json.Decode.field "currentNoteId" (Json.Decode.nullable Json.Decode.int))
+        (Json.Decode.field "showSidebar" Json.Decode.bool)
+
+
+modelEncoder : Model -> Json.Encode.Value
+modelEncoder model =
+    Json.Encode.object
+        [ ( "notes", Json.Encode.list noteEncoder model.notes )
+        , ( "showSidebar", Json.Encode.bool model.showSidebar )
+        , ( "currentNoteId"
+          , model.currentNoteId
+                |> Maybe.map Json.Encode.int
+                |> Maybe.withDefault Json.Encode.null
+          )
+        ]
 
 
 
@@ -93,6 +147,7 @@ type Msg
     | SelectNote Int
     | CloseNote
     | ToggleSidebar
+    | SaveData Time.Posix
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -122,6 +177,9 @@ update msg model =
 
         ToggleSidebar ->
             ( { model | showSidebar = not model.showSidebar }, Cmd.none )
+
+        SaveData _ ->
+            ( model, Ports.saveData <| modelEncoder model )
 
 
 newNote : Model -> Note
@@ -308,6 +366,11 @@ getBody model =
             Nothing ->
                 column
                     [ spacing 16
+                    , width fill
+                    , centerX
+                    , centerX
+                    , paddingXY 12 16
+                    , paddingXY 12 16
                     ]
                     [ newNoteButton
                     , notePreviews model.notes
@@ -424,6 +487,7 @@ button onPress lbl color =
         , Font.size buttonFontSize
         , Border.rounded 6
         , width fill
+        , Region.description "Close note editor"
         ]
         { onPress = onPress
         , label = Element.text lbl
@@ -511,4 +575,7 @@ trimContents s =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    onResize (\w h -> WindowResized { width = w, height = h })
+    Sub.batch
+        [ onResize (\w h -> WindowResized { width = w, height = h })
+        , Time.every (1 * 1000) SaveData
+        ]
