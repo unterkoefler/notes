@@ -5243,7 +5243,6 @@ var $author$project$Main$dimensionsDecoder = A3(
 	$author$project$Main$Dimensions,
 	A2($elm$json$Json$Decode$field, 'width', $elm$json$Json$Decode$int),
 	A2($elm$json$Json$Decode$field, 'height', $elm$json$Json$Decode$int));
-var $elm$core$Debug$log = _Debug_log;
 var $author$project$Main$Model = F4(
 	function (dimensions, notes, currentNoteId, showSidebar) {
 		return {currentNoteId: currentNoteId, dimensions: dimensions, notes: notes, showSidebar: showSidebar};
@@ -5305,20 +5304,6 @@ var $author$project$Main$parseFlags = function (flags) {
 		$elm$core$Result$withDefault,
 		$author$project$Main$defaultDimensions,
 		A2($elm$json$Json$Decode$decodeValue, $author$project$Main$dimensionsDecoder, flags));
-	var _v0 = A2(
-		$elm$core$Debug$log,
-		'flags',
-		A2(
-			$elm$json$Json$Decode$decodeValue,
-			A2($elm$json$Json$Decode$field, 'data', $elm$json$Json$Decode$string),
-			flags));
-	var _v1 = A2(
-		$elm$core$Debug$log,
-		'result',
-		A2(
-			$elm$json$Json$Decode$decodeValue,
-			A2($elm$json$Json$Decode$field, 'data', $author$project$Main$modelDecoder),
-			flags));
 	return _Utils_update(
 		model,
 		{dimensions: dimensions});
@@ -12108,6 +12093,10 @@ var $mdgriffith$elm_ui$Element$Background$color = function (clr) {
 			'background-color',
 			clr));
 };
+var $mdgriffith$elm_ui$Internal$Model$Label = function (a) {
+	return {$: 'Label', a: a};
+};
+var $mdgriffith$elm_ui$Element$Region$description = A2($elm$core$Basics$composeL, $mdgriffith$elm_ui$Internal$Model$Describe, $mdgriffith$elm_ui$Internal$Model$Label);
 var $mdgriffith$elm_ui$Internal$Model$PaddingStyle = F5(
 	function (a, b, c, d, e) {
 		return {$: 'PaddingStyle', a: a, b: b, c: c, d: d, e: e};
@@ -12169,7 +12158,8 @@ var $author$project$Main$button = F3(
 					$mdgriffith$elm_ui$Element$Font$center,
 					$mdgriffith$elm_ui$Element$Font$size($author$project$Main$buttonFontSize),
 					$mdgriffith$elm_ui$Element$Border$rounded(6),
-					$mdgriffith$elm_ui$Element$width($mdgriffith$elm_ui$Element$fill)
+					$mdgriffith$elm_ui$Element$width($mdgriffith$elm_ui$Element$fill),
+					$mdgriffith$elm_ui$Element$Region$description('Close note editor')
 				]),
 			{
 				label: $mdgriffith$elm_ui$Element$text(lbl),
@@ -12399,9 +12389,6 @@ var $mdgriffith$elm_ui$Element$Input$getHeight = function (attr) {
 	} else {
 		return $elm$core$Maybe$Nothing;
 	}
-};
-var $mdgriffith$elm_ui$Internal$Model$Label = function (a) {
-	return {$: 'Label', a: a};
 };
 var $mdgriffith$elm_ui$Element$Input$hiddenLabelAttribute = function (label) {
 	if (label.$ === 'HiddenLabel') {
@@ -13311,13 +13298,24 @@ var $mdgriffith$elm_ui$Internal$Model$Top = {$: 'Top'};
 var $mdgriffith$elm_ui$Element$alignTop = $mdgriffith$elm_ui$Internal$Model$AlignY($mdgriffith$elm_ui$Internal$Model$Top);
 var $mdgriffith$elm_ui$Element$clipX = A2($mdgriffith$elm_ui$Internal$Model$Class, $mdgriffith$elm_ui$Internal$Flag$overflow, $mdgriffith$elm_ui$Internal$Style$classes.clipX);
 var $author$project$Main$ToggleSidebar = {$: 'ToggleSidebar'};
-var $mdgriffith$elm_ui$Element$Region$description = A2($elm$core$Basics$composeL, $mdgriffith$elm_ui$Internal$Model$Describe, $mdgriffith$elm_ui$Internal$Model$Label);
+var $mdgriffith$elm_ui$Element$moveDown = function (y) {
+	return A2(
+		$mdgriffith$elm_ui$Internal$Model$TransformComponent,
+		$mdgriffith$elm_ui$Internal$Flag$moveY,
+		$mdgriffith$elm_ui$Internal$Model$MoveY(y));
+};
+var $mdgriffith$elm_ui$Internal$Model$MoveX = function (a) {
+	return {$: 'MoveX', a: a};
+};
+var $mdgriffith$elm_ui$Internal$Flag$moveX = $mdgriffith$elm_ui$Internal$Flag$flag(25);
+var $mdgriffith$elm_ui$Element$moveRight = function (x) {
+	return A2(
+		$mdgriffith$elm_ui$Internal$Model$TransformComponent,
+		$mdgriffith$elm_ui$Internal$Flag$moveX,
+		$mdgriffith$elm_ui$Internal$Model$MoveX(x));
+};
 var $mdgriffith$elm_ui$Internal$Model$Empty = {$: 'Empty'};
 var $mdgriffith$elm_ui$Element$none = $mdgriffith$elm_ui$Internal$Model$Empty;
-var $mdgriffith$elm_ui$Internal$Model$OnRight = {$: 'OnRight'};
-var $mdgriffith$elm_ui$Element$onRight = function (element) {
-	return A2($mdgriffith$elm_ui$Element$createNearby, $mdgriffith$elm_ui$Internal$Model$OnRight, element);
-};
 var $author$project$Main$purple = A3($mdgriffith$elm_ui$Element$rgb, 0.61, 0.33, 0.88);
 var $mdgriffith$elm_ui$Element$Border$widthXY = F2(
 	function (x, y) {
@@ -13357,17 +13355,23 @@ var $author$project$Main$sidebarToggler = function (showSidebar) {
 				$mdgriffith$elm_ui$Element$height($mdgriffith$elm_ui$Element$fill),
 				$mdgriffith$elm_ui$Element$Border$color($author$project$Main$purple),
 				$mdgriffith$elm_ui$Element$Border$widthEach(
-				{bottom: 0, left: 0, right: 3, top: 0}),
+				{bottom: 0, left: 0, right: 1, top: 0}),
 				$mdgriffith$elm_ui$Element$padding(12),
-				$mdgriffith$elm_ui$Element$onRight(
+				$mdgriffith$elm_ui$Element$inFront(
 				A2(
 					$mdgriffith$elm_ui$Element$Input$button,
 					_List_fromArray(
 						[
 							$mdgriffith$elm_ui$Element$Region$description('toggle sidebar'),
 							$mdgriffith$elm_ui$Element$Border$width(1),
-							$mdgriffith$elm_ui$Element$Border$rounded(100),
-							$mdgriffith$elm_ui$Element$padding(12)
+							$mdgriffith$elm_ui$Element$Border$rounded(500),
+							A2($mdgriffith$elm_ui$Element$paddingXY, 12, 10),
+							$mdgriffith$elm_ui$Element$moveRight(6),
+							$mdgriffith$elm_ui$Element$moveDown(12),
+							$mdgriffith$elm_ui$Element$Font$color($author$project$Main$purple),
+							$mdgriffith$elm_ui$Element$Border$color($author$project$Main$purple),
+							$mdgriffith$elm_ui$Element$Background$color(
+							A4($mdgriffith$elm_ui$Element$rgba, 1.0, 1.0, 1.0, 1.0))
 						]),
 					{
 						label: $mdgriffith$elm_ui$Element$text(label),

@@ -462,14 +462,19 @@ sidebarToggler showSidebar =
     el
         [ height fill
         , Border.color purple
-        , Border.widthEach { bottom = 0, top = 0, left = 0, right = 3 }
+        , Border.widthEach { bottom = 0, top = 0, left = 0, right = 1 }
         , padding 12
-        , onRight <|
+        , inFront <|
             Input.button
                 [ Region.description "toggle sidebar"
                 , Border.width 1
-                , Border.rounded 100
-                , padding 12
+                , Border.rounded 500
+                , paddingXY 12 10
+                , moveRight 6
+                , moveDown 12
+                , Font.color purple
+                , Border.color purple
+                , Background.color <| rgba 1.0 1.0 1.0 1.0
                 ]
                 { label = text label
                 , onPress = Just ToggleSidebar
