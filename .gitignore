@@ -5,3 +5,5 @@ repl-temp-*
 
 *.swp
 .envrc
+
+.venv

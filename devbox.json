@@ -2,7 +2,8 @@
   "packages": [
     "simple-http-server",
     "elmPackages.elm",
-    "elmPackages.elm-format"
+    "elmPackages.elm-format",
+    "python311"
   ],
   "shell": {
     "init_hook": null
