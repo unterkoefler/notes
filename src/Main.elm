@@ -12,6 +12,8 @@ import Html exposing (Html)
 import Json.Decode
 import Json.Encode
 import Ports
+import Prng.Uuid as Uuid exposing (Uuid)
+import Random.Pcg.Extended as Random
 import Time
 
 
@@ -30,10 +32,11 @@ main =
 
 
 type alias Model =
-    { dimensions : Dimensions
-    , notes : List Note
-    , currentNoteId : Maybe Int
+    { notes : List Note
+    , currentNoteId : Maybe Uuid
     , showSidebar : Bool
+    , dimensions : Dimensions
+    , seed : Random.Seed
     }
 
 
@@ -45,8 +48,9 @@ type alias Dimensions =
 
 type alias Note =
     { contents : String
-    , id : Int
+    , id : Uuid
     , title : String
+    , lastSynced : Maybe Time.Posix
     }
 
 
@@ -61,12 +65,13 @@ init flags =
     )
 
 
-defaultModel : Model
-defaultModel =
+defaultModel : Dimensions -> Random.Seed -> Model
+defaultModel dim seed =
     { notes = []
     , showSidebar = True
     , currentNoteId = Nothing
-    , dimensions = defaultDimensions
+    , dimensions = dim
+    , seed = seed
     }
 
 
@@ -77,11 +82,23 @@ parseFlags flags =
             Json.Decode.decodeValue dimensionsDecoder flags
                 |> Result.withDefault defaultDimensions
 
-        model =
+        seedInt =
+            Json.Decode.decodeValue (Json.Decode.field "seed" Json.Decode.int) flags
+                |> Result.withDefault 0
+
+        seedExtension =
+            Json.Decode.decodeValue (Json.Decode.field "seedExtension" (Json.Decode.list Json.Decode.int)) flags
+                |> Result.withDefault []
+
+        seed =
+            Random.initialSeed seedInt seedExtension
+
+        makeModel : Dimensions -> Random.Seed -> Model
+        makeModel =
             Json.Decode.decodeValue (Json.Decode.field "data" modelDecoder) flags
                 |> Result.withDefault defaultModel
     in
-    { model | dimensions = dimensions }
+    makeModel dimensions seed
 
 
 dimensionsDecoder : Json.Decode.Decoder Dimensions
@@ -99,26 +116,28 @@ defaultDimensions =
 
 noteDecoder : Json.Decode.Decoder Note
 noteDecoder =
-    Json.Decode.map3 Note
+    Json.Decode.map4 Note
         (Json.Decode.field "contents" Json.Decode.string)
-        (Json.Decode.field "id" Json.Decode.int)
+        (Json.Decode.field "id" Uuid.decoder)
         (Json.Decode.field "title" Json.Decode.string)
+        (Json.Decode.field "lastSynced" (Json.Decode.nullable (Json.Decode.map Time.millisToPosix Json.Decode.int)))
 
 
 noteEncoder : Note -> Json.Encode.Value
 noteEncoder note =
     Json.Encode.object
-        [ ( "id", Json.Encode.int note.id )
+        [ ( "id", Uuid.encode note.id )
         , ( "title", Json.Encode.string note.title )
         , ( "contents", Json.Encode.string note.contents )
+        , ( "lastSynced", Maybe.withDefault Json.Encode.null <| Maybe.map (Json.Encode.int << Time.posixToMillis) note.lastSynced )
         ]
 
 
-modelDecoder : Json.Decode.Decoder Model
+modelDecoder : Json.Decode.Decoder (Dimensions -> Random.Seed -> Model)
 modelDecoder =
-    Json.Decode.map3 (Model defaultDimensions)
+    Json.Decode.map3 Model
         (Json.Decode.field "notes" (Json.Decode.list noteDecoder))
-        (Json.Decode.field "currentNoteId" (Json.Decode.nullable Json.Decode.int))
+        (Json.Decode.field "currentNoteId" (Json.Decode.nullable Uuid.decoder))
         (Json.Decode.field "showSidebar" Json.Decode.bool)
 
 
@@ -129,7 +148,7 @@ modelEncoder model =
         , ( "showSidebar", Json.Encode.bool model.showSidebar )
         , ( "currentNoteId"
           , model.currentNoteId
-                |> Maybe.map Json.Encode.int
+                |> Maybe.map Uuid.encode
                 |> Maybe.withDefault Json.Encode.null
           )
         ]
@@ -142,9 +161,9 @@ modelEncoder model =
 type Msg
     = WindowResized Dimensions
     | AddNote
-    | EditNoteContents Int String
-    | EditNoteTitle Int String
-    | SelectNote Int
+    | EditNoteContents Uuid String
+    | EditNoteTitle Uuid String
+    | SelectNote Uuid
     | CloseNote
     | ToggleSidebar
     | SaveData Time.Posix
@@ -158,10 +177,16 @@ update msg model =
 
         AddNote ->
             let
-                n =
+                ( n, newSeed ) =
                     newNote model
             in
-            ( { model | notes = n :: model.notes, currentNoteId = Just n.id }, Cmd.none )
+            ( { model
+                | notes = n :: model.notes
+                , currentNoteId = Just n.id
+                , seed = newSeed
+              }
+            , Cmd.none
+            )
 
         EditNoteContents id newContents ->
             ( { model | notes = editNoteContents id newContents model.notes }, Cmd.none )
@@ -182,22 +207,25 @@ update msg model =
             ( model, Ports.saveData <| modelEncoder model )
 
 
-newNote : Model -> Note
+newNote : Model -> ( Note, Random.Seed )
 newNote model =
     let
-        maxId =
-            model.notes |> List.map .id |> List.maximum |> Maybe.withDefault 0
+        ( id, newSeed ) =
+            Random.step Uuid.generator model.seed
 
-        id =
-            maxId + 1
+        title =
+            "Note " ++ String.fromInt (List.length model.notes + 1)
     in
-    { id = id
-    , contents = ""
-    , title = "Note " ++ String.fromInt id
-    }
+    ( { id = id
+      , contents = ""
+      , title = title
+      , lastSynced = Nothing
+      }
+    , newSeed
+    )
 
 
-editNoteContents : Int -> String -> List Note -> List Note
+editNoteContents : Uuid -> String -> List Note -> List Note
 editNoteContents id newContents notes =
     let
         ( maybeNote, notesWithoutCurrent ) =
@@ -211,7 +239,7 @@ editNoteContents id newContents notes =
             { noteToEdit | contents = newContents } :: notesWithoutCurrent
 
 
-editNoteTitle : Int -> String -> List Note -> List Note
+editNoteTitle : Uuid -> String -> List Note -> List Note
 editNoteTitle id newTitle notes =
     let
         ( maybeNote, notesWithoutCurrent ) =
@@ -225,7 +253,7 @@ editNoteTitle id newTitle notes =
             { noteToEdit | title = newTitle } :: notesWithoutCurrent
 
 
-findNote : Int -> List Note -> Maybe Note
+findNote : Uuid -> List Note -> Maybe Note
 findNote id notes =
     notes
         |> List.filter (\n -> n.id == id)
