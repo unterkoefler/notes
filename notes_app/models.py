@@ -7,4 +7,12 @@ class Note(models.Model):
   contents = models.TextField(blank=True)
   last_updated = models.PositiveBigIntegerField()
 
+  def __str__(self):
+      return self.title
 
+  def to_dict(self):
+      return {
+              "id": self.id,
+              "title": self.title,
+              "contents": self.contents
+              }
