@@ -1,4 +1,5 @@
 import uuid
+import time
 from django.db import models
 
 class Note(models.Model):
@@ -14,5 +15,6 @@ class Note(models.Model):
       return {
               "id": self.id,
               "title": self.title,
-              "contents": self.contents
+              "contents": self.contents,
+              "lastSynced": int(time.time())
               }

@@ -1,17 +1,17 @@
 import json
 import time
-from django.http import HttpResponse, JsonResponse
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from .models import Note
 
-def index(request):
-    return HttpResponse("Yo what it do")
-
+@csrf_exempt
 def sync(request):
     # TODO: check that its a POST
     data = json.loads(request.body)
     notes_with_conflicts = add_or_update_notes(data["notes"])
     notes_with_conflicts += delete_notes(data["deletedNotes"])
 
-    all_notes = Notes.objects.all()
+    all_notes = Note.objects.all()
     return JsonResponse({
         "notes": [ note.to_dict() for note in all_notes ],
         "conflicts": notes_with_conflicts
@@ -47,6 +47,8 @@ def update_existing_note(note, existing_note):
         existing_note.last_updated = int(time.time())
         existing_note.save()
         return None
+    elif is_note_unchanged(note, existing_note):
+        return None
     else:
         copiedNote = Note(
             title="Copy of: " + note["title"],
@@ -56,10 +58,15 @@ def update_existing_note(note, existing_note):
         copiedNote.save()
         return copiedNote.id
 
+def is_note_unchanged(note, existing_note):
+    return (existing_note.title == note["title"] and
+            existing_note.contents == note["contents"])
+
+
 def delete_notes(notes_to_delete):
     conflicting_notes = []
     for note in notes_to_delete:
-        existing_note = Notes.objects.get(pk=note["id"])
+        existing_note = Note.objects.get(pk=note["id"])
         if existing_note.last_updated < note["lastSynced"]:
             n.delete()
         else:

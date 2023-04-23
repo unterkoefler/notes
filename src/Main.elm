@@ -9,6 +9,7 @@ import Element.Font as Font
 import Element.Input as Input
 import Element.Region as Region
 import Html exposing (Html)
+import Http
 import Json.Decode
 import Json.Encode
 import Ports
@@ -37,6 +38,8 @@ type alias Model =
     , showSidebar : Bool
     , dimensions : Dimensions
     , seed : Random.Seed
+    , isSyncing : Bool
+    , errorMessage : Maybe String
     }
 
 
@@ -65,13 +68,15 @@ init flags =
     )
 
 
-defaultModel : Dimensions -> Random.Seed -> Model
-defaultModel dim seed =
+defaultModel : Dimensions -> Random.Seed -> Bool -> Maybe String -> Model
+defaultModel dim seed isSyncing errorMessage =
     { notes = []
     , showSidebar = True
     , currentNoteId = Nothing
     , dimensions = dim
     , seed = seed
+    , isSyncing = isSyncing
+    , errorMessage = errorMessage
     }
 
 
@@ -93,12 +98,11 @@ parseFlags flags =
         seed =
             Random.initialSeed seedInt seedExtension
 
-        makeModel : Dimensions -> Random.Seed -> Model
         makeModel =
             Json.Decode.decodeValue (Json.Decode.field "data" modelDecoder) flags
                 |> Result.withDefault defaultModel
     in
-    makeModel dimensions seed
+    makeModel dimensions seed False Nothing
 
 
 dimensionsDecoder : Json.Decode.Decoder Dimensions
@@ -133,7 +137,7 @@ noteEncoder note =
         ]
 
 
-modelDecoder : Json.Decode.Decoder (Dimensions -> Random.Seed -> Model)
+modelDecoder : Json.Decode.Decoder (Dimensions -> Random.Seed -> Bool -> Maybe String -> Model)
 modelDecoder =
     Json.Decode.map3 Model
         (Json.Decode.field "notes" (Json.Decode.list noteDecoder))
@@ -167,6 +171,8 @@ type Msg
     | CloseNote
     | ToggleSidebar
     | SaveData Time.Posix
+    | SyncData
+    | SyncedData (Result Http.Error ( List Note, List Uuid ))
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -204,7 +210,22 @@ update msg model =
             ( { model | showSidebar = not model.showSidebar }, Cmd.none )
 
         SaveData _ ->
-            ( model, Ports.saveData <| modelEncoder model )
+            ( model, Cmd.none )
+
+        -- ( model, Ports.saveData <| modelEncoder model )
+        SyncData ->
+            ( { model | isSyncing = True }, beginSync model.notes [] )
+
+        -- TODO: store deleted note ids
+        SyncedData (Ok ( notes, _ )) ->
+            ( { model | notes = notes, isSyncing = False }, Cmd.none )
+
+        SyncedData (Err e) ->
+            let
+                _ =
+                    Debug.log "error syncing" e
+            in
+            ( { model | errorMessage = Just <| Debug.toString e }, Cmd.none )
 
 
 newNote : Model -> ( Note, Random.Seed )
@@ -277,6 +298,30 @@ findWithRestHelp pred xs acc =
 
             else
                 findWithRestHelp pred rest (x :: acc)
+
+
+beginSync : List Note -> List Uuid -> Cmd Msg
+beginSync notes deletedNoteIds =
+    Http.post
+        { url = "http://192.168.68.62:8001/sync" -- TODO: make configurable
+        , body = Http.jsonBody <| syncDataEncoder notes deletedNoteIds
+        , expect = Http.expectJson SyncedData syncedDataDecoder
+        }
+
+
+syncDataEncoder : List Note -> List Uuid -> Json.Encode.Value
+syncDataEncoder notes deletedNoteIds =
+    Json.Encode.object
+        [ ( "notes", Json.Encode.list noteEncoder notes )
+        , ( "deletedNotes", Json.Encode.list Uuid.encode deletedNoteIds )
+        ]
+
+
+syncedDataDecoder : Json.Decode.Decoder ( List Note, List Uuid )
+syncedDataDecoder =
+    Json.Decode.map2 Tuple.pair
+        (Json.Decode.field "notes" (Json.Decode.list noteDecoder))
+        (Json.Decode.field "conflicts" (Json.Decode.list Uuid.decoder))
 
 
 
@@ -401,6 +446,13 @@ getBody model =
                     , paddingXY 12 16
                     ]
                     [ newNoteButton
+                    , syncDataButton model.isSyncing
+                    , case model.errorMessage of
+                        Just err ->
+                            text err
+
+                        Nothing ->
+                            Element.none
                     , notePreviews model.notes
                     ]
 
@@ -410,7 +462,7 @@ getBody model =
                     , width fill
                     , spacing 24
                     ]
-                    [ sidebar model.showSidebar model.notes
+                    [ sidebar model.showSidebar model.isSyncing model.notes
                     , noteEditor n
                     ]
 
@@ -437,8 +489,8 @@ heading =
         (text "Notes")
 
 
-sidebar : Bool -> List Note -> Element Msg
-sidebar showSidebar notes =
+sidebar : Bool -> Bool -> List Note -> Element Msg
+sidebar showSidebar isSyncing notes =
     if not showSidebar then
         sidebarToggler showSidebar
 
@@ -455,6 +507,7 @@ sidebar showSidebar notes =
                 , width fill
                 ]
                 [ newNoteButton
+                , syncDataButton isSyncing
                 , notePreviews notes
                 ]
             , sidebarToggler showSidebar
@@ -475,6 +528,15 @@ notePreviews notes =
 newNoteButton : Element Msg
 newNoteButton =
     button (Just AddNote) "+ Add note" green
+
+
+syncDataButton : Bool -> Element Msg
+syncDataButton isSyncing =
+    if isSyncing then
+        button Nothing "syncing..." teal
+
+    else
+        button (Just SyncData) "Sync" teal
 
 
 sidebarToggler : Bool -> Element Msg
