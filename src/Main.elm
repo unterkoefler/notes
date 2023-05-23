@@ -1,7 +1,9 @@
 module Main exposing (..)
 
 import Browser exposing (Document)
+import Browser.Dom as Dom
 import Browser.Events exposing (onResize)
+import Colors
 import Element exposing (..)
 import Element.Background as Background
 import Element.Border as Border
@@ -9,12 +11,14 @@ import Element.Font as Font
 import Element.Input as Input
 import Element.Region as Region
 import Html exposing (Html)
+import Html.Attributes
 import Http
 import Json.Decode
 import Json.Encode
 import Ports
 import Prng.Uuid as Uuid exposing (Uuid)
 import Random.Pcg.Extended as Random
+import Task
 import Time
 
 
@@ -173,6 +177,7 @@ type Msg
     | SaveData Time.Posix
     | SyncData
     | SyncedData (Result Http.Error ( List Note, List Uuid ))
+    | NoOp
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -191,7 +196,7 @@ update msg model =
                 , currentNoteId = Just n.id
                 , seed = newSeed
               }
-            , Cmd.none
+            , focusElement noteContentsInputId
             )
 
         EditNoteContents id newContents ->
@@ -210,9 +215,8 @@ update msg model =
             ( { model | showSidebar = not model.showSidebar }, Cmd.none )
 
         SaveData _ ->
-            ( model, Cmd.none )
+            ( model, Ports.saveData <| modelEncoder model )
 
-        -- ( model, Ports.saveData <| modelEncoder model )
         SyncData ->
             ( { model | isSyncing = True }, beginSync model.notes [] )
 
@@ -226,6 +230,14 @@ update msg model =
                     Debug.log "error syncing" e
             in
             ( { model | errorMessage = Just <| Debug.toString e }, Cmd.none )
+
+        NoOp ->
+            ( model, Cmd.none )
+
+
+focusElement : String -> Cmd Msg
+focusElement id =
+    Task.attempt (\_ -> NoOp) (Dom.focus id)
 
 
 newNote : Model -> ( Note, Random.Seed )
@@ -373,65 +385,26 @@ baseSpacing =
     12
 
 
-headingFontSize =
-    2 * baseFontSize
-
-
 buttonFontSize =
     24
-
-
-headingSpacing =
-    2 * baseSpacing
-
-
-buttonSpacing =
-    5
-
-
-columnWidth : ScreenSize -> Int -> Length
-columnWidth screenSize w =
-    let
-        max =
-            w - (2 * (basePadding.left + basePadding.right))
-    in
-    case screenSize of
-        Mobile ->
-            px 400
-                |> maximum max
-
-        Desktop ->
-            px 600
-                |> maximum max
-
-
-headingColor =
-    Element.rgb 0.2 0.34 0.98
-
-
-green =
-    Element.rgb 0.4 0.78 0.4
-
-
-purple =
-    Element.rgb 0.61 0.33 0.88
-
-
-teal =
-    Element.rgb 0.4 0.78 0.8
 
 
 getBody : Model -> Html Msg
 getBody model =
     let
-        screenSize =
-            getScreenSize model.dimensions
-
         currentNote : Maybe Note
         currentNote =
             Maybe.andThen (\id -> findNote id model.notes) model.currentNoteId
     in
-    Element.layout
+    Element.layoutWith
+        { options =
+            [ focusStyle
+                { borderColor = Just Colors.white
+                , backgroundColor = Nothing
+                , shadow = Nothing --Just { color = Colors.secondary, offset = (0, 0), blur = 1, size = 1 }
+                }
+            ]
+        }
         [ Font.size baseFontSize
         ]
     <|
@@ -441,19 +414,33 @@ getBody model =
                     [ spacing 16
                     , width fill
                     , centerX
-                    , centerX
-                    , paddingXY 12 16
-                    , paddingXY 12 16
                     ]
-                    [ newNoteButton
-                    , syncDataButton model.isSyncing
-                    , case model.errorMessage of
-                        Just err ->
-                            text err
+                    [ header model
+                    , column
+                        [ width (pct 85 model.dimensions.width)
+                        , centerX
+                        , spacing 16
+                        ]
+                        [ row
+                            [ spacing 48
+                            , width fill
+                            , paddingXY 24 0
+                            ]
+                            [ squareButton model.dimensions (Just AddNote) "Add note" Colors.primary
+                            , syncDataButton model.dimensions model.isSyncing squareButton
+                            ]
+                        , case model.errorMessage of
+                            Just err ->
+                                text err
 
-                        Nothing ->
-                            Element.none
-                    , notePreviews model.notes
+                            Nothing ->
+                                Element.none
+                        , el
+                            [ paddingXY 24 0
+                            ]
+                          <|
+                            notePreviews model.dimensions Home model.notes
+                        ]
                     ]
 
             Just n ->
@@ -462,81 +449,93 @@ getBody model =
                     , width fill
                     , spacing 24
                     ]
-                    [ sidebar model.showSidebar model.isSyncing model.notes
-                    , noteEditor n
+                    [ sidebar model.dimensions model.showSidebar model.isSyncing model.notes
+                    , noteEditor model.dimensions n
                     ]
 
 
-responsiveColumnAttributes : ScreenSize -> List (Attribute Msg)
-responsiveColumnAttributes screenSize =
-    case screenSize of
-        Mobile ->
-            []
-
-        Desktop ->
-            [ centerX ]
-
-
-heading : Element Msg
-heading =
-    el
-        [ Region.heading 1
-        , alignLeft
-        , Font.size headingFontSize
-        , spacing headingSpacing
-        , Font.color headingColor
+header : Model -> Element Msg
+header model =
+    row
+        [ width fill
+        , Background.color Colors.primary
+        , Font.color Colors.white
+        , Font.size 36
+        , paddingXY 18 12
         ]
-        (text "Notes")
+        [ paragraph
+            []
+            [ text "Notey Notes" ]
+        ]
 
 
-sidebar : Bool -> Bool -> List Note -> Element Msg
-sidebar showSidebar isSyncing notes =
+sidebar : Dimensions -> Bool -> Bool -> List Note -> Element Msg
+sidebar dims showSidebar isSyncing notes =
     if not showSidebar then
         sidebarToggler showSidebar
 
     else
+        let
+            w =
+                pct 25 dims.width |> maximum 300 |> minimum 160
+        in
         row
-            [ width (px 200)
+            [ width w
             , height fill
             ]
             [ column
-                [ spacing 16
+                [ spacing 8
                 , alignTop
-                , paddingXY 24 24
                 , clipX
                 , width fill
                 ]
-                [ newNoteButton
-                , syncDataButton isSyncing
-                , notePreviews notes
+                [ Input.button
+                    [ width fill
+                    , Background.color Colors.primary
+                    , Font.color Colors.white
+                    , Font.size 24
+                    , paddingXY 12 24
+                    ]
+                    { label = text "Notey Notes"
+                    , onPress = Just CloseNote
+                    }
+                , column
+                    [ paddingXY 24 24
+                    , spacing 16
+                    , width fill
+                    ]
+                    [ rectangleButton dims (Just AddNote) "Add note" Colors.primary
+                    , syncDataButton dims isSyncing rectangleButton
+                    , notePreviews dims Sidebar notes
+                    ]
                 ]
             , sidebarToggler showSidebar
             ]
 
 
-notePreviews : List Note -> Element Msg
-notePreviews notes =
+type PreviewContext
+    = Sidebar
+    | Home
+
+
+notePreviews : Dimensions -> PreviewContext -> List Note -> Element Msg
+notePreviews dims ctx notes =
     column
         [ spacing 12
         , scrollbarY
         , height (px 800)
         , width fill
         ]
-        (List.map notePreview notes)
+        (List.map (notePreview dims ctx) notes)
 
 
-newNoteButton : Element Msg
-newNoteButton =
-    button (Just AddNote) "+ Add note" green
-
-
-syncDataButton : Bool -> Element Msg
-syncDataButton isSyncing =
+syncDataButton : Dimensions -> Bool -> (Dimensions -> Maybe Msg -> String -> Color -> Element Msg) -> Element Msg
+syncDataButton dims isSyncing buttonF =
     if isSyncing then
-        button Nothing "syncing..." teal
+        buttonF dims Nothing "syncing..." Colors.highlight
 
     else
-        button (Just SyncData) "Sync" teal
+        buttonF dims (Just SyncData) "Sync" Colors.highlight
 
 
 sidebarToggler : Bool -> Element Msg
@@ -549,59 +548,91 @@ sidebarToggler showSidebar =
             else
                 ">"
     in
-    el
+    Input.button
         [ height fill
-        , Border.color purple
+        , Border.color Colors.secondary
         , Border.widthEach { bottom = 0, top = 0, left = 0, right = 1 }
-        , padding 12
+
+        --        , padding 12
         , inFront <|
             Input.button
                 [ Region.description "toggle sidebar"
                 , Border.width 1
                 , Border.rounded 500
                 , paddingXY 12 10
-                , moveRight 6
-                , moveDown 12
-                , Font.color purple
-                , Border.color purple
+                , moveLeft 15
+                , moveDown 250
+                , Font.color Colors.secondary
+                , Border.color Colors.secondary
                 , Background.color <| rgba 1.0 1.0 1.0 1.0
                 ]
                 { label = text label
-                , onPress = Just ToggleSidebar
+                , onPress = Nothing --, onPress = Just ToggleSidebar
                 }
         ]
-        Element.none
-
-
-button : Maybe Msg -> String -> Element.Color -> Element Msg
-button onPress lbl color =
-    Input.button
-        [ Background.color color
-        , paddingXY 6 12
-        , Font.center
-        , Font.size buttonFontSize
-        , Border.rounded 6
-        , width fill
-        , Region.description "Close note editor"
-        ]
-        { onPress = onPress
-        , label = Element.text lbl
+        { label = Element.none
+        , onPress = Just ToggleSidebar
         }
 
 
-noteEditor : Note -> Element Msg
-noteEditor { id, contents, title } =
+squareButton : Dimensions -> Maybe Msg -> String -> Element.Color -> Element Msg
+squareButton dims onPress lbl color =
+    let
+        w =
+            pct 30 dims.width |> maximum 300
+    in
+    Input.button
+        [ Border.color color
+        , Border.width 1
+        , paddingXY 6 12
+        , Font.center
+        , Font.size buttonFontSize
+        , Font.color color
+        , Border.rounded 6
+        , width w
+        , height w
+        ]
+        { onPress = onPress
+        , label = paragraph [ width shrink, centerX ] [ text lbl ]
+        }
+
+
+rectangleButton : Dimensions -> Maybe Msg -> String -> Element.Color -> Element Msg
+rectangleButton dims onPress lbl color =
+    Input.button
+        [ Border.color color
+        , Border.width 1
+        , paddingXY 6 12
+        , Font.center
+        , Font.size buttonFontSize
+        , Font.color color
+        , Border.rounded 6
+        , width fill
+        ]
+        { onPress = onPress
+        , label = paragraph [] [ text lbl ]
+        }
+
+
+noteEditor : Dimensions -> Note -> Element Msg
+noteEditor dims { id, contents, title } =
+    let
+        w =
+            pct 60 dims.width |> maximum 800 |> minimum 300
+    in
     column
         [ spacing 6
-        , width fill
+        , paddingXY 12 24
+        , width w
+        , centerX
         , height fill
-        , padding 12
         ]
         [ row
             [ width fill
             ]
             [ Input.text
-                [ Font.size 16, Font.underline ]
+                [ Font.size 28
+                ]
                 { label = Input.labelHidden "Note title"
                 , onChange = EditNoteTitle id
                 , placeholder = Nothing
@@ -610,17 +641,17 @@ noteEditor { id, contents, title } =
             , Input.button
                 [ alignRight
                 , padding 6
-                , Border.width 1
-                , Border.rounded 200
-                , Border.color (rgb255 200 25 25)
                 ]
-                { label = text "X"
-                , onPress = Just CloseNote
+                { label = text "delete"
+                , onPress = Nothing -- TODO
                 }
             ]
         , Input.multiline
             [ width fill
             , height fill
+            , Input.focusedOnLoad
+            , htmlAttribute <| Html.Attributes.id noteContentsInputId
+            , Font.size 14
             ]
             { label = Input.labelHidden "Note contents"
             , onChange = EditNoteContents id
@@ -631,21 +662,30 @@ noteEditor { id, contents, title } =
         ]
 
 
-notePreview : Note -> Element Msg
-notePreview { id, contents, title } =
+noteContentsInputId =
+    "notes-content"
+
+
+notePreview : Dimensions -> PreviewContext -> Note -> Element Msg
+notePreview dims ctx { id, contents, title } =
     let
         label =
             column
                 [ spacing 6
+                , width fill
                 ]
-                [ el
-                    [ Font.size 16 ]
-                    (text title)
+                [ paragraph
+                    [ Font.size 18
+                    , width fill
+                    ]
+                    [ text title ]
                 , el
                     [ clip
                     , height (px 16)
+                    , Font.color Colors.gray
+                    , width fill
                     ]
-                    (text <| trimContents contents)
+                    (text <| trimContents dims ctx contents)
                 ]
     in
     Input.button
@@ -655,13 +695,33 @@ notePreview { id, contents, title } =
         }
 
 
-trimContents : String -> String
-trimContents s =
-    if String.length s < 30 then
+trimContents : Dimensions -> PreviewContext -> String -> String
+trimContents dims ctx s =
+    let
+        width =
+            case ctx of
+                Sidebar ->
+                    (25 * dims.width // 100) - 24
+
+                -- TODO abstract
+                Home ->
+                    (75 * dims.width // 100) - 48
+
+        breakpoint =
+            floor (0.25 * toFloat width)
+
+        -- TODO: fix
+    in
+    if String.length s < breakpoint then
         s
 
     else
-        String.left 26 s ++ "..."
+        String.left (breakpoint - 4) s ++ "..."
+
+
+pct : Int -> Int -> Length
+pct p x =
+    px (x * p // 100)
 
 
 
